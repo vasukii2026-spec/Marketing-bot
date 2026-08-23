@@ -1,0 +1,53 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Login — Vasukii Marketing Bot</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .login-wrap {
+            max-width: 380px;
+            margin: 12vh auto;
+            padding: 2rem;
+        }
+        .login-wrap h1 { font-size: 1.4rem; margin-bottom: 1.5rem; }
+        .login-wrap label { display: block; margin-bottom: 1rem; }
+        .login-wrap input {
+            width: 100%;
+            padding: 0.6rem;
+            margin-top: 0.3rem;
+            box-sizing: border-box;
+        }
+        .login-wrap button { width: 100%; margin-top: 0.5rem; }
+    </style>
+</head>
+<body>
+    <div class="bg-glow"></div>
+    <main>
+        <section class="card-in login-wrap">
+            <h1><span class="logo-mark">🐍</span> Vasukii Marketing Bot</h1>
+
+            {% with messages = get_flashed_messages(with_categories=true) %}
+                {% if messages %}
+                    <div class="flash-stack">
+                        {% for category, message in messages %}
+                            <div class="flash-banner flash-{{ category }}">{{ message }}</div>
+                        {% endfor %}
+                    </div>
+                {% endif %}
+            {% endwith %}
+
+            <form action="{{ url_for('login') }}" method="post">
+                <input type="hidden" name="next" value="{{ next }}">
+                <label>Password
+                    <input type="password" name="password" autocomplete="current-password" required autofocus>
+                </label>
+                <label>6-digit code from your authenticator app
+                    <input type="text" name="code" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required>
+                </label>
+                <button type="submit" class="btn">Log in</button>
+            </form>
+        </section>
+    </main>
+</body>
+</html>

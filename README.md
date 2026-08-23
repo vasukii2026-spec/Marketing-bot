@@ -44,6 +44,8 @@ automatically too.
    TELEGRAM_BOT_TOKEN=...        (optional)
    TELEGRAM_CHAT_ID=...          (optional)
    FLASK_SECRET_KEY=...          (any random string)
+   ADMIN_PASSWORD=...            (the password you'll log in with)
+   TOTP_SECRET=...               (see "Setting up login" below)
    ```
 
 6. **Deploy.** Vercel builds automatically on every push. Your dashboard
@@ -52,6 +54,37 @@ automatically too.
 7. **First run**: the database tables are created automatically the
    first time the app starts (`models.init_db()` runs on import), so
    there's no manual migration step.
+
+## Setting up login (password + 2FA)
+
+Anyone who gets the URL only gets a login screen — the dashboard itself
+requires a password *and* a 6-digit code from an authenticator app
+(Google Authenticator, Authy, 1Password, etc.), the same style of 2FA
+used by most bank/email logins. Set it up once:
+
+1. **Pick a password** and set it as `ADMIN_PASSWORD` in your env vars.
+2. **Generate a 2FA secret** — run this once, anywhere with Python:
+   ```
+   python -c "import pyotp; print(pyotp.random_base32())"
+   ```
+   It prints something like `JBSWY3DPEHPK3PXP`. Set that as `TOTP_SECRET`
+   in your env vars.
+3. **Add it to your authenticator app**: open Google Authenticator (or
+   similar) → Add account → "Enter a setup key manually" → account name
+   can be anything (e.g. "Vasukii Bot") → paste the same secret from
+   step 2 → Time-based. The app will now show a fresh 6-digit code every
+   30 seconds.
+4. **Log in**: open your dashboard URL, enter your password plus the
+   current 6-digit code from the app.
+
+Notes:
+- If `ADMIN_PASSWORD` or `TOTP_SECRET` aren't set, the app refuses all
+  dashboard requests (fails closed) rather than leaving it open.
+- Sessions last 7 days, so you won't have to log in on every visit.
+- To change your password or reset 2FA, just update the env vars and
+  redeploy — this immediately invalidates the old ones. If you change
+  `TOTP_SECRET`, you'll need to re-add the new secret to your
+  authenticator app too.
 
 ## Local setup (optional, for testing before you deploy)
 

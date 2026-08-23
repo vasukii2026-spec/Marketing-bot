@@ -10,6 +10,9 @@
     <header class="topbar">
         <h1><span class="logo-mark">🐍</span> Vasukii Marketing Bot</h1>
         <p class="subtitle">Generate <span class="arrow-pulse">→</span> Review <span class="arrow-pulse">→</span> Approve <span class="arrow-pulse">→</span> Live</p>
+        <form action="{{ url_for('logout') }}" method="post" style="position:absolute; top:1rem; right:1rem;">
+            <button type="submit" class="btn-chip">Log out</button>
+        </form>
     </header>
 
     <main>

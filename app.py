@@ -6,7 +6,7 @@ Then open http://localhost:5000
 """
 import os
 import uuid
-from flask import Flask, render_template, request, redirect, url_for, jsonify, flash
+from flask import Flask, render_template, request, redirect, url_for, jsonify, flash, session
 from dotenv import load_dotenv
 from werkzeug.utils import secure_filename
 
@@ -15,12 +15,19 @@ load_dotenv()  # reads keys from the .env file so you don't set them in the term
 import models
 import generator
 import storage
+import auth
 from connectors.discord_connector import post_to_discord
 from connectors.bluesky_connector import post_to_bluesky
 from connectors.telegram_connector import post_to_telegram
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "vasukii-dev-secret-change-me")
+app.config.update(
+    SESSION_COOKIE_HTTPONLY=True,
+    SESSION_COOKIE_SAMESITE="Lax",
+    SESSION_COOKIE_SECURE=os.environ.get("VERCEL", "") != "",  # HTTPS-only cookie in production
+    PERMANENT_SESSION_LIFETIME=60 * 60 * 24 * 7,  # stay logged in for 7 days
+)
 models.init_db()
 
 IMAGE_EXTS = {"png", "jpg", "jpeg", "gif", "webp"}
@@ -63,7 +70,37 @@ def _publish(draft_id, platform, content, media_path=None, media_type=None):
     return success, error
 
 
+@app.route("/login", methods=["GET", "POST"])
+def login():
+    next_url = request.values.get("next") or url_for("dashboard")
+    if request.method == "GET":
+        return render_template("login.html", next=next_url)
+
+    password = request.form.get("password", "")
+    code = request.form.get("code", "")
+
+    if not auth.is_configured():
+        flash("Login is not configured on the server (missing ADMIN_PASSWORD / TOTP_SECRET).", "error")
+        return render_template("login.html", next=next_url), 503
+
+    if auth.check_password(password) and auth.check_totp(code):
+        session.clear()
+        session["authed"] = True
+        session.permanent = True
+        return redirect(next_url)
+
+    flash("Incorrect password or code.", "error")
+    return render_template("login.html", next=next_url), 401
+
+
+@app.route("/logout", methods=["POST"])
+def logout():
+    session.clear()
+    return redirect(url_for("login"))
+
+
 @app.route("/")
+@auth.login_required
 def dashboard():
     status_filter = request.args.get("status", "pending")
     if status_filter == "all":
@@ -75,6 +112,7 @@ def dashboard():
 
 
 @app.route("/generate", methods=["POST"])
+@auth.login_required
 def generate():
     platform = request.form.get("platform", "discord")
     topic = request.form.get("topic", "").strip()
@@ -97,6 +135,7 @@ def generate():
 
 
 @app.route("/draft/<int:draft_id>/edit", methods=["POST"])
+@auth.login_required
 def edit_draft(draft_id):
     new_content = request.form.get("content", "").strip()
     if new_content:
@@ -105,6 +144,7 @@ def edit_draft(draft_id):
 
 
 @app.route("/draft/<int:draft_id>/media", methods=["POST"])
+@auth.login_required
 def upload_media(draft_id):
     draft = models.get_draft(draft_id)
     if not draft:
@@ -131,6 +171,7 @@ def upload_media(draft_id):
 
 
 @app.route("/draft/<int:draft_id>/media/remove", methods=["POST"])
+@auth.login_required
 def remove_media(draft_id):
     draft = models.get_draft(draft_id)
     if draft and draft.get("media_path"):
@@ -140,6 +181,7 @@ def remove_media(draft_id):
 
 
 @app.route("/draft/<int:draft_id>/approve", methods=["POST"])
+@auth.login_required
 def approve_draft(draft_id):
     """Approving now posts immediately — one click instead of Approve + Post Now.
     If the post fails (bad creds, network, etc.) it stays visible as 'approved'
@@ -153,12 +195,14 @@ def approve_draft(draft_id):
 
 
 @app.route("/draft/<int:draft_id>/reject", methods=["POST"])
+@auth.login_required
 def reject_draft(draft_id):
     models.update_draft_status(draft_id, "rejected")
     return redirect(url_for("dashboard"))
 
 
 @app.route("/draft/<int:draft_id>/post", methods=["POST"])
+@auth.login_required
 def post_draft(draft_id):
     """Manual retry for a draft that failed to post on approve."""
     draft = models.get_draft(draft_id)
