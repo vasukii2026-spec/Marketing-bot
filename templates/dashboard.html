@@ -1,0 +1,162 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Vasukii Marketing Bot</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body>
+    <div class="bg-glow"></div>
+    <header class="topbar">
+        <h1><span class="logo-mark">🐍</span> Vasukii Marketing Bot</h1>
+        <p class="subtitle">Generate <span class="arrow-pulse">→</span> Review <span class="arrow-pulse">→</span> Approve <span class="arrow-pulse">→</span> Live</p>
+    </header>
+
+    <main>
+        {% with messages = get_flashed_messages(with_categories=true) %}
+            {% if messages %}
+                <div class="flash-stack">
+                    {% for category, message in messages %}
+                        <div class="flash-banner flash-{{ category }}">{{ message }}</div>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% endwith %}
+
+        <section class="generate-panel card-in">
+            <h2>Generate New Drafts</h2>
+            <form action="{{ url_for('generate') }}" method="post" class="generate-form" id="generateForm">
+                <div class="form-row">
+                    <label>Platform
+                        <select name="platform" id="platformSelect">
+                            <option value="discord">Discord</option>
+                            <option value="bluesky">Bluesky</option>
+                            <option value="telegram">Telegram</option>
+                        </select>
+                    </label>
+                    <label>Variants
+                        <select name="count">
+                            <option value="1">1</option>
+                            <option value="3" selected>3</option>
+                            <option value="5">5</option>
+                        </select>
+                    </label>
+                </div>
+                <label class="full-width">Topic / angle
+                    <input type="text" name="topic" placeholder="e.g. VAK airdrop claim reminder, new DM feature, milestone at 50k claims" required>
+                </label>
+                <button type="submit" class="btn btn-primary" id="generateBtn">
+                    <span class="btn-label">Generate Drafts</span>
+                    <span class="btn-spinner" aria-hidden="true"></span>
+                </button>
+            </form>
+        </section>
+
+        <section class="drafts-panel card-in" style="animation-delay: .06s">
+            <div class="panel-header">
+                <h2>Drafts</h2>
+                <div class="filter-tabs">
+                    <a href="?status=pending" class="{{ 'active' if current_filter == 'pending' }}">Pending</a>
+                    <a href="?status=approved" class="{{ 'active' if current_filter == 'approved' }}">Needs Retry</a>
+                    <a href="?status=posted" class="{{ 'active' if current_filter == 'posted' }}">Posted</a>
+                    <a href="?status=rejected" class="{{ 'active' if current_filter == 'rejected' }}">Rejected</a>
+                    <a href="?status=all" class="{{ 'active' if current_filter == 'all' }}">All</a>
+                </div>
+            </div>
+
+            {% if not drafts %}
+                <p class="empty-state">No drafts here. Generate some above.</p>
+            {% endif %}
+
+            {% for d in drafts %}
+            <div class="draft-card status-{{ d.status }} card-in" style="animation-delay: {{ (loop.index0 * 0.04) }}s">
+                <div class="draft-meta">
+                    <span class="badge platform-{{ d.platform }}">{{ d.platform }}</span>
+                    <span class="badge status-badge status-dot-{{ d.status }}">{{ d.status }}</span>
+                    {% if d.topic %}<span class="topic-tag">{{ d.topic }}</span>{% endif %}
+                </div>
+
+                <form action="{{ url_for('edit_draft', draft_id=d.id) }}" method="post" class="edit-form">
+                    <textarea name="content" rows="4">{{ d.content }}</textarea>
+                    <button type="submit" class="btn btn-small">Save Edit</button>
+                </form>
+
+                <div class="media-block">
+                    {% if d.media_path %}
+                        <div class="media-preview">
+                            {% if d.media_type == 'video' %}
+                                <video src="{{ d.media_path }}" controls></video>
+                            {% else %}
+                                <img src="{{ d.media_path }}" alt="attached media">
+                            {% endif %}
+                            <form action="{{ url_for('remove_media', draft_id=d.id) }}" method="post" class="media-remove-form">
+                                <button type="submit" class="btn-chip btn-chip-remove">Remove media</button>
+                            </form>
+                        </div>
+                    {% else %}
+                        <form action="{{ url_for('upload_media', draft_id=d.id) }}" method="post" enctype="multipart/form-data" class="media-upload-form">
+                            <label class="btn-chip media-upload-label">
+                                📎 Attach image / video
+                                <input type="file" name="media" accept="image/*,video/*" onchange="this.form.submit()" hidden>
+                            </label>
+                        </form>
+                    {% endif %}
+                </div>
+
+                <div class="draft-actions">
+                    {% if d.status == 'pending' %}
+                        <form action="{{ url_for('approve_draft', draft_id=d.id) }}" method="post">
+                            <button class="btn btn-approve">Approve &amp; Post</button>
+                        </form>
+                        <form action="{{ url_for('reject_draft', draft_id=d.id) }}" method="post">
+                            <button class="btn btn-reject">Reject</button>
+                        </form>
+                    {% elif d.status == 'approved' %}
+                        <span class="failed-note">⚠ Last attempt failed — check the log below</span>
+                        <form action="{{ url_for('post_draft', draft_id=d.id) }}" method="post">
+                            <button class="btn btn-post">Retry Post</button>
+                        </form>
+                    {% elif d.status == 'posted' %}
+                        <span class="posted-label">✓ Posted {{ d.posted_at }}</span>
+                    {% endif %}
+                </div>
+            </div>
+            {% endfor %}
+        </section>
+
+        <section class="log-panel card-in" style="animation-delay: .12s">
+            <h2>Recent Post Log</h2>
+            {% if not log %}
+                <p class="empty-state">No posts sent yet.</p>
+            {% endif %}
+            <table>
+                <thead><tr><th>Platform</th><th>Content</th><th>Status</th><th>Time</th></tr></thead>
+                <tbody>
+                {% for entry in log %}
+                    <tr>
+                        <td><span class="badge platform-{{ entry.platform }}">{{ entry.platform }}</span></td>
+                        <td class="log-content">{{ entry.content[:80] }}{% if entry.content|length > 80 %}...{% endif %}</td>
+                        <td>{% if entry.success %}<span class="success">✓ Sent</span>{% else %}<span class="failure">✗ Failed</span>{% endif %}</td>
+                        <td>{{ entry.posted_at }}</td>
+                    </tr>
+                    {% if not entry.success and entry.error_message %}
+                    <tr class="error-row"><td colspan="4">{{ entry.error_message }}</td></tr>
+                    {% endif %}
+                {% endfor %}
+                </tbody>
+            </table>
+        </section>
+    </main>
+
+    <script>
+        // Small UX touch: show a spinner state on the Generate button while the
+        // AI call is in flight (this is a normal server round-trip, not JS-driven
+        // posting — no auto-posting logic lives here).
+        document.getElementById('generateForm').addEventListener('submit', function () {
+            var btn = document.getElementById('generateBtn');
+            btn.classList.add('is-loading');
+            btn.disabled = true;
+        });
+    </script>
+</body>
+</html>
