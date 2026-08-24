@@ -10,9 +10,13 @@
     <header class="topbar">
         <h1><span class="logo-mark">🐍</span> Vasukii Marketing Bot</h1>
         <p class="subtitle">Generate <span class="arrow-pulse">→</span> Review <span class="arrow-pulse">→</span> Approve <span class="arrow-pulse">→</span> Live</p>
-        <form action="{{ url_for('logout') }}" method="post" style="position:absolute; top:1rem; right:1rem;">
-            <button type="submit" class="btn-chip">Log out</button>
-        </form>
+        <div style="position:absolute; top:1rem; right:1rem; display:flex; gap:0.5rem; align-items:center;">
+            <a href="{{ url_for('calendar_view') }}" class="btn-chip">📅 Calendar</a>
+            <a href="{{ url_for('insights') }}" class="btn-chip">📊 Insights</a>
+            <form action="{{ url_for('logout') }}" method="post">
+                <button type="submit" class="btn-chip">Log out</button>
+            </form>
+        </div>
     </header>
 
     <main>
@@ -69,6 +73,7 @@
                 <h2>Drafts</h2>
                 <div class="filter-tabs">
                     <a href="?status=pending" class="{{ 'active' if current_filter == 'pending' }}">Pending</a>
+                    <a href="?status=scheduled" class="{{ 'active' if current_filter == 'scheduled' }}">Scheduled</a>
                     <a href="?status=approved" class="{{ 'active' if current_filter == 'approved' }}">Needs Retry</a>
                     <a href="?status=posted" class="{{ 'active' if current_filter == 'posted' }}">Posted</a>
                     <a href="?status=rejected" class="{{ 'active' if current_filter == 'rejected' }}">Rejected</a>
@@ -88,10 +93,29 @@
                     {% if d.topic %}<span class="topic-tag">{{ d.topic }}</span>{% endif %}
                 </div>
 
+                {% set compliance_flags = check_compliance(d.content) %}
+                {% if compliance_flags %}
+                <div class="compliance-warning">
+                    <strong>⚠ Flagged for review:</strong>
+                    <ul>
+                        {% for f in compliance_flags %}
+                        <li><span class="compliance-severity-{{ f.severity }}">{{ f.severity }}</span> — "{{ f.phrase }}": {{ f.reason }}</li>
+                        {% endfor %}
+                    </ul>
+                    <p class="compliance-disclaimer">Not legal advice — a quick automated check, not a substitute for real compliance review.</p>
+                </div>
+                {% endif %}
+
                 <form action="{{ url_for('edit_draft', draft_id=d.id) }}" method="post" class="edit-form">
-                    <textarea name="content" rows="4">{{ d.content }}</textarea>
+                    <textarea name="content" rows="4" class="draft-textarea" data-platform="{{ d.platform }}" oninput="updateCharCount(this)">{{ d.content }}</textarea>
+                    <div class="char-count" data-draft-id="{{ d.id }}"></div>
                     <button type="submit" class="btn btn-small">Save Edit</button>
                 </form>
+
+                <div class="hashtag-block" data-draft-id="{{ d.id }}">
+                    <button type="button" class="btn-chip" onclick="suggestHashtags({{ d.id }})">💡 Suggest hashtags</button>
+                    <div class="hashtag-chips" id="hashtags-{{ d.id }}"></div>
+                </div>
 
                 <div class="media-block">
                     {% if d.media_path %}
@@ -112,6 +136,10 @@
                                 <input type="file" name="media" accept="image/*,video/*" onchange="this.form.submit()" hidden>
                             </label>
                         </form>
+                        <form action="{{ url_for('generate_image_route', draft_id=d.id) }}" method="post" class="image-gen-form" onsubmit="return startImageGen(this)">
+                            <input type="text" name="prompt" placeholder="Optional: describe the image, or leave blank to auto-generate">
+                            <button type="submit" class="btn-chip">🎨 Generate image</button>
+                        </form>
                     {% endif %}
                 </div>
 
@@ -122,6 +150,15 @@
                         </form>
                         <form action="{{ url_for('reject_draft', draft_id=d.id) }}" method="post">
                             <button class="btn btn-reject">Reject</button>
+                        </form>
+                        <form action="{{ url_for('schedule_draft_route', draft_id=d.id) }}" method="post" class="schedule-form">
+                            <input type="datetime-local" name="scheduled_for" required>
+                            <button type="submit" class="btn-chip">🕐 Schedule (UTC)</button>
+                        </form>
+                    {% elif d.status == 'scheduled' %}
+                        <span class="scheduled-label">🕐 Scheduled for {{ d.scheduled_for }} UTC</span>
+                        <form action="{{ url_for('unschedule_draft_route', draft_id=d.id) }}" method="post">
+                            <button class="btn btn-reject">Unschedule</button>
                         </form>
                     {% elif d.status == 'approved' %}
                         <span class="failed-note">⚠ Last attempt failed — check the log below</span>
@@ -183,6 +220,64 @@
             btn.classList.add('is-loading');
             btn.disabled = true;
         });
+
+        // Per-platform character limits, used for the live count under each
+        // draft's textarea. Discord has no hard limit worth warning about,
+        // so it's given a generous soft ceiling just to flag unusually long posts.
+        const PLATFORM_LIMITS = {
+            discord: 2000,
+            bluesky: 300,
+            telegram: 4096,
+            mastodon: 500,
+        };
+
+        function updateCharCount(textarea) {
+            const platform = textarea.dataset.platform;
+            const limit = PLATFORM_LIMITS[platform] || 2000;
+            const count = textarea.value.length;
+            const el = textarea.parentElement.querySelector('.char-count');
+            el.textContent = count + ' / ' + limit;
+            el.classList.toggle('over-limit', count > limit);
+        }
+
+        // Run once on load so counts show immediately, not just after typing.
+        document.querySelectorAll('.draft-textarea').forEach(updateCharCount);
+
+        function startImageGen(form) {
+            const btn = form.querySelector('button');
+            btn.textContent = '🎨 Generating… (can take ~10-20s)';
+            btn.disabled = true;
+            return true; // let the normal form submit proceed
+        }
+
+        async function suggestHashtags(draftId) {
+            const container = document.getElementById('hashtags-' + draftId);
+            container.textContent = 'Thinking…';
+            try {
+                const resp = await fetch('/draft/' + draftId + '/hashtags', { method: 'POST' });
+                const data = await resp.json();
+                if (!resp.ok || !data.hashtags || !data.hashtags.length) {
+                    container.textContent = data.error || 'No suggestions available.';
+                    return;
+                }
+                container.innerHTML = '';
+                data.hashtags.forEach(function (tag) {
+                    const chip = document.createElement('button');
+                    chip.type = 'button';
+                    chip.className = 'btn-chip hashtag-chip';
+                    chip.textContent = tag;
+                    chip.onclick = function () {
+                        const card = container.closest('.draft-card');
+                        const textarea = card.querySelector('.draft-textarea');
+                        textarea.value = textarea.value.trimEnd() + ' ' + tag;
+                        updateCharCount(textarea);
+                    };
+                    container.appendChild(chip);
+                });
+            } catch (e) {
+                container.textContent = 'Failed to fetch suggestions.';
+            }
+        }
     </script>
 </body>
 </html>
