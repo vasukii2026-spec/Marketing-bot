@@ -1,0 +1,101 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Calendar — Vasukii Marketing Bot</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <style>
+        .cal-nav { display: flex; gap: 0.5rem; margin-bottom: 1.5rem; }
+        .cal-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 0.6rem;
+        }
+        .cal-day {
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 10px;
+            padding: 0.7rem;
+            text-decoration: none;
+            color: inherit;
+            display: block;
+            transition: transform 0.1s, border-color 0.1s;
+        }
+        .cal-day:hover { transform: translateY(-2px); border-color: rgba(255,255,255,0.3); }
+        .cal-day.has-activity { border-color: rgba(139,92,246,0.5); }
+        .cal-day.selected { border-color: #8b5cf6; background: rgba(139,92,246,0.08); }
+        .cal-date { font-weight: 600; font-size: 0.85rem; opacity: 0.8; }
+        .cal-counts { margin-top: 0.4rem; font-size: 0.78rem; display: flex; flex-direction: column; gap: 0.15rem; }
+        .cal-count-posted { color: #4ade80; }
+        .cal-count-failed { color: #f87171; }
+        .cal-count-pending { color: #facc15; }
+        .day-detail { margin-top: 2rem; }
+        .day-detail-item {
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+            padding: 0.8rem;
+            margin-bottom: 0.6rem;
+        }
+    </style>
+</head>
+<body>
+    <div class="bg-glow"></div>
+    <header class="topbar">
+        <h1><span class="logo-mark">🐍</span> Post Calendar</h1>
+        <p class="subtitle">Last 45 days of activity</p>
+        <div style="position:absolute; top:1rem; right:1rem; display:flex; gap:0.5rem;">
+            <a href="{{ url_for('dashboard') }}" class="btn-chip">← Dashboard</a>
+            <a href="{{ url_for('insights') }}" class="btn-chip">📊 Insights</a>
+        </div>
+    </header>
+
+    <main>
+        <section class="card-in">
+            <div class="cal-grid">
+                {% for day, counts in calendar_data.items() | sort(reverse=true) %}
+                <a href="{{ url_for('calendar_view', day=day) }}"
+                   class="cal-day {% if counts.posted or counts.failed or counts.pending %}has-activity{% endif %} {% if day == selected_day %}selected{% endif %}">
+                    <div class="cal-date">{{ day }}</div>
+                    <div class="cal-counts">
+                        {% if counts.posted %}<span class="cal-count-posted">✓ {{ counts.posted }} posted</span>{% endif %}
+                        {% if counts.failed %}<span class="cal-count-failed">✗ {{ counts.failed }} failed</span>{% endif %}
+                        {% if counts.pending %}<span class="cal-count-pending">◷ {{ counts.pending }} drafted</span>{% endif %}
+                    </div>
+                </a>
+                {% endfor %}
+            </div>
+
+            {% if not calendar_data %}
+                <p class="empty-state">No activity yet — generate and post something first.</p>
+            {% endif %}
+
+            {% if selected_day %}
+            <div class="day-detail">
+                <h2>{{ selected_day }}</h2>
+
+                {% if not selected_log and not selected_drafts %}
+                    <p class="empty-state">Nothing on this day.</p>
+                {% endif %}
+
+                {% for entry in selected_log %}
+                <div class="day-detail-item">
+                    <span class="badge platform-{{ entry.platform }}">{{ entry.platform }}</span>
+                    {% if entry.success %}<span class="success">✓ Posted</span>{% else %}<span class="failure">✗ Failed</span>{% endif %}
+                    <p>{{ entry.content[:140] }}{% if entry.content|length > 140 %}...{% endif %}</p>
+                    <small>{{ entry.posted_at }}</small>
+                </div>
+                {% endfor %}
+
+                {% for d in selected_drafts %}
+                <div class="day-detail-item">
+                    <span class="badge platform-{{ d.platform }}">{{ d.platform }}</span>
+                    <span class="badge status-badge status-dot-{{ d.status }}">{{ d.status }}</span>
+                    <p>{{ d.content[:140] }}{% if d.content|length > 140 %}...{% endif %}</p>
+                    <small>Created {{ d.created_at }}</small>
+                </div>
+                {% endfor %}
+            </div>
+            {% endif %}
+        </section>
+    </main>
+</body>
+</html>

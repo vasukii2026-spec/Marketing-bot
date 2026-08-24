@@ -1,0 +1,147 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>Insights — Vasukii Marketing Bot</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.4/chart.umd.min.js"></script>
+    <style>
+        .insights-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 1.5rem;
+            margin-bottom: 1.5rem;
+        }
+        @media (max-width: 900px) { .insights-grid { grid-template-columns: 1fr; } }
+        .chart-card {
+            border: 1px solid rgba(255,255,255,0.1);
+            border-radius: 12px;
+            padding: 1.2rem;
+        }
+        .chart-card h3 { margin-top: 0; font-size: 1rem; opacity: 0.85; }
+        .top-post-item {
+            border: 1px solid rgba(255,255,255,0.08);
+            border-radius: 8px;
+            padding: 0.7rem;
+            margin-bottom: 0.6rem;
+        }
+        .top-post-stats { font-size: 0.85rem; opacity: 0.8; margin-top: 0.3rem; }
+    </style>
+</head>
+<body>
+    <div class="bg-glow"></div>
+    <header class="topbar">
+        <h1><span class="logo-mark">🐍</span> Insights</h1>
+        <p class="subtitle">Performance across platforms</p>
+        <div style="position:absolute; top:1rem; right:1rem; display:flex; gap:0.5rem;">
+            <a href="{{ url_for('dashboard') }}" class="btn-chip">← Dashboard</a>
+            <a href="{{ url_for('calendar_view') }}" class="btn-chip">📅 Calendar</a>
+        </div>
+    </header>
+
+    <main>
+        {% if not data.by_platform %}
+            <p class="empty-state">No posts logged yet — nothing to show here until you post something.</p>
+        {% else %}
+        <div class="insights-grid">
+            <div class="chart-card card-in">
+                <h3>Posts per platform</h3>
+                <canvas id="platformChart"></canvas>
+            </div>
+            <div class="chart-card card-in">
+                <h3>Total engagement per platform</h3>
+                <p style="font-size:0.75rem; opacity:0.6; margin-top:-0.5rem;">
+                    Only counts posts where you've clicked "Refresh stats" — Telegram isn't tracked (not exposed by its API).
+                </p>
+                <canvas id="engagementChart"></canvas>
+            </div>
+        </div>
+
+        <div class="chart-card card-in" style="margin-bottom: 1.5rem;">
+            <h3>Posts per day (last 14 days)</h3>
+            <canvas id="timeseriesChart"></canvas>
+        </div>
+
+        <section class="card-in">
+            <h2>Top posts by engagement</h2>
+            {% if not data.top_posts %}
+                <p class="empty-state">No engagement data yet — click "Refresh stats" on the dashboard's post log first.</p>
+            {% endif %}
+            {% for p in data.top_posts %}
+            <div class="top-post-item">
+                <span class="badge platform-{{ p.platform }}">{{ p.platform }}</span>
+                <p>{{ p.content[:140] }}{% if p.content|length > 140 %}...{% endif %}</p>
+                <div class="top-post-stats">❤️ {{ p.likes or 0 }} &nbsp; 🔁 {{ p.reposts or 0 }} &nbsp; 💬 {{ p.replies or 0 }} &nbsp; · &nbsp; {{ p.posted_at }}</div>
+            </div>
+            {% endfor %}
+        </section>
+        {% endif %}
+    </main>
+
+    <script>
+        const byPlatform = {{ data.by_platform | tojson }};
+        const timeseries = {{ data.timeseries | tojson }};
+
+        const colors = {
+            discord: '#5865F2', bluesky: '#1185FE', telegram: '#26A5E4', mastodon: '#6364FF'
+        };
+        const platformLabels = byPlatform.map(p => p.platform);
+        const platformColors = platformLabels.map(p => colors[p] || '#8b5cf6');
+
+        if (byPlatform.length) {
+            new Chart(document.getElementById('platformChart'), {
+                type: 'doughnut',
+                data: {
+                    labels: platformLabels,
+                    datasets: [{
+                        data: byPlatform.map(p => p.total),
+                        backgroundColor: platformColors,
+                    }]
+                },
+                options: { plugins: { legend: { labels: { color: '#ddd' } } } }
+            });
+
+            new Chart(document.getElementById('engagementChart'), {
+                type: 'bar',
+                data: {
+                    labels: platformLabels,
+                    datasets: [
+                        { label: 'Likes', data: byPlatform.map(p => p.likes), backgroundColor: '#f87171' },
+                        { label: 'Reposts', data: byPlatform.map(p => p.reposts), backgroundColor: '#4ade80' },
+                        { label: 'Replies', data: byPlatform.map(p => p.replies), backgroundColor: '#60a5fa' },
+                    ]
+                },
+                options: {
+                    scales: {
+                        x: { ticks: { color: '#ddd' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+                        y: { ticks: { color: '#ddd' }, grid: { color: 'rgba(255,255,255,0.1)' } },
+                    },
+                    plugins: { legend: { labels: { color: '#ddd' } } }
+                }
+            });
+
+            new Chart(document.getElementById('timeseriesChart'), {
+                type: 'line',
+                data: {
+                    labels: timeseries.map(t => t.day),
+                    datasets: [{
+                        label: 'Posts sent',
+                        data: timeseries.map(t => t.n),
+                        borderColor: '#8b5cf6',
+                        backgroundColor: 'rgba(139,92,246,0.2)',
+                        fill: true,
+                        tension: 0.3,
+                    }]
+                },
+                options: {
+                    scales: {
+                        x: { ticks: { color: '#ddd' }, grid: { color: 'rgba(255,255,255,0.05)' } },
+                        y: { ticks: { color: '#ddd', precision: 0 }, grid: { color: 'rgba(255,255,255,0.1)' } },
+                    },
+                    plugins: { legend: { labels: { color: '#ddd' } } }
+                }
+            });
+        }
+    </script>
+</body>
+</html>
