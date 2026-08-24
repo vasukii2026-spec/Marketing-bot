@@ -207,3 +207,80 @@ developers as of 2026. If any of those change, the connector pattern in
 - There's still no unattended auto-*posting* — "automatic" here means
   drafts appear on their own; a human still approves before anything
   goes out.
+- **AI image generation** — click "🎨 Generate image" on any draft. Leave
+  the text box blank and Groq writes an image description from the
+  post's content automatically (in Vasukii's cosmic/serpent visual
+  style); or type your own description to use instead. The actual image
+  comes from Pollinations.ai — a free, no-key, no-signup image
+  generation service (Groq itself can't generate images, only text — this
+  is a separate provider). Takes ~10-20 seconds. No cost either way.
+- **Hashtag suggestions** — click "💡 Suggest hashtags" on any draft to
+  get 3-5 AI-suggested tags (crypto/web3-tuned); click any chip to append
+  it to the draft. Uses your existing Groq key, no extra setup.
+- **Character-count preview** — a live counter under each draft's text
+  box, colored red if you're over that platform's limit (Bluesky 300,
+  Mastodon 500, Telegram 4096, Discord's soft ceiling 2000).
+- **Calendar view** (`/calendar`, linked from the top bar) — see the last
+  45 days at a glance: posted/failed/drafted counts per day, click into
+  any day for details.
+- **Insights dashboard** (`/insights`, linked from the top bar) — charts
+  for posts-per-platform, total engagement per platform, a 14-day
+  posting timeseries, and your top 5 posts by engagement. Engagement
+  numbers only populate for posts you've refreshed stats on (see "Post
+  performance tracking" above) — it's not live/real-time.
+
+## Scheduling posts for a specific time
+
+Each pending draft has a "🕐 Schedule (UTC)" field — pick a date/time and
+it moves to the **Scheduled** tab instead of posting immediately. When
+that time arrives, `/api/cron/check-scheduled` posts it automatically
+(no human click needed at that point — only the *scheduling* decision
+was manual).
+
+**Important — this needs a bit of extra setup beyond just deploying:**
+Vercel's own Cron on the Hobby plan only fires once a day, and even then
+only "sometime within the scheduled hour" — not useful for "post this at
+2:37pm." To get real time-of-day precision for free, point a free
+external scheduler at that route instead:
+
+1. Sign up for a free account at [cron-job.org](https://cron-job.org)
+   (or any similar free cron service).
+2. Create a new cron job:
+   - URL: `https://your-app.vercel.app/api/cron/check-scheduled`
+   - Schedule: every 5 minutes (or however precise you want it)
+   - Method: POST
+   - Add a custom header: `Authorization: Bearer YOUR_CRON_SECRET`
+     (same value as your `CRON_SECRET` env var in Vercel)
+3. That's it — the route checks for any scheduled draft whose time has
+   passed and posts it, every time it's hit.
+
+**Times are UTC.** The schedule field doesn't do timezone conversion —
+whatever you type is treated as UTC. If you're not in UTC, do the math
+once (e.g. IST is UTC+5:30, so 7:00 PM IST = 1:30 PM UTC) or just note
+your offset and always add/subtract it when scheduling.
+
+The daily Vercel Cron already in `vercel.json` still runs for
+auto-generation — you don't need to remove it. This external scheduler
+is *only* for checking scheduled posts more often than once a day.
+
+## Compliance checker (risky language flagging)
+
+A "⚠ Flagged for review" box automatically appears on any draft
+containing language that's commonly risky in crypto/Web3 marketing —
+things like "guaranteed returns," "risk-free," "100x," "get rich quick,"
+implied regulatory approval, and similar phrases. It runs instantly,
+locally, for free (no AI call — it's a pattern-matching check, not a
+Groq request), both right after generation and live on every draft
+render, so edits get re-checked too.
+
+**This is a first-pass net, not legal advice or a compliance
+guarantee.** It catches obviously risky phrasing; it won't catch every
+subtle issue, and a false positive (flagging something that's actually
+fine, like "this is not financial advice") is possible. Treat it as a
+prompt to double-check, not a stamp of approval. If Vasukii's marketing
+needs real regulatory sign-off, that still means an actual compliance
+review — this tool doesn't replace one.
+
+To adjust what's flagged, edit `RISKY_PATTERNS` in `compliance.py` — add,
+remove, or reword entries; each has a regex pattern, a plain-English
+reason, and a severity (`high`/`medium`/`low`).

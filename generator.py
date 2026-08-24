@@ -103,6 +103,110 @@ Write only the post content. No preamble, no explanation, no quotation marks aro
     return content
 
 
+def suggest_image_prompt(platform, content):
+    """
+    Writes a text description of a matching graphic for this post, in
+    Vasukii's cosmic/serpent visual style. This description is what gets
+    sent to the actual image generator (Pollinations) — Groq only writes
+    the words, it doesn't create the picture itself.
+    """
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY not set.")
+
+    prompt = f"""You are describing a marketing graphic to accompany this social media post:
+
+\"\"\"{content}\"\"\"
+
+Vasukii's visual identity: dark cosmic-void aesthetic, serpent/snake
+imagery, deep purples and teals, glowing/neon accents, digital art style.
+
+Write ONE short image description (under 40 words) for an AI image
+generator. Describe the scene, subject, colors, lighting, and art style.
+Do NOT include any text, words, letters, or logos in the description —
+AI image generators render text badly. Respond with ONLY the description,
+nothing else."""
+
+    response = requests.post(
+        GROQ_URL,
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.8,
+            "max_completion_tokens": 200,
+            "reasoning_effort": "low",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+    description = (data["choices"][0]["message"].get("content") or "").strip()
+    if not description:
+        raise RuntimeError("Groq returned an empty image description. Try again.")
+    return description
+
+
+def suggest_hashtags(platform, content):
+    """
+    Suggests 3-5 relevant hashtags for a given draft, tuned to crypto/web3
+    audiences. Returns a list of strings like ["#Web3", "#Polygon"].
+    Raises the same way generate_draft does on missing key / API failure.
+    """
+    if not GROQ_API_KEY:
+        raise RuntimeError("GROQ_API_KEY not set.")
+
+    platform_note = {
+        "bluesky": "Bluesky audiences use hashtags sparingly — suggest at most 3.",
+        "mastodon": "Mastodon audiences dislike hashtag spam — suggest at most 3, and only ones that add real discoverability.",
+        "discord": "Discord doesn't really use hashtags for discovery, but a couple can still work for flavor.",
+        "telegram": "Telegram channels sometimes use a few hashtags for searchability.",
+    }.get(platform, "")
+
+    prompt = f"""You are suggesting hashtags for this social media post (for Vasukii, a Web3/crypto social app):
+
+\"\"\"{content}\"\"\"
+
+{platform_note}
+Suggest 3-5 relevant, non-generic hashtags (mix of project-specific and
+crypto/web3-relevant tags). Respond with ONLY a comma-separated list of
+hashtags, each starting with #, nothing else. Example format:
+#Web3, #Polygon, #Airdrop"""
+
+    response = requests.post(
+        GROQ_URL,
+        headers={
+            "Authorization": f"Bearer {GROQ_API_KEY}",
+            "Content-Type": "application/json",
+        },
+        json={
+            "model": MODEL,
+            "messages": [{"role": "user", "content": prompt}],
+            "temperature": 0.6,
+            "max_completion_tokens": 300,
+            "reasoning_effort": "low",
+        },
+        timeout=20,
+    )
+    response.raise_for_status()
+    data = response.json()
+    raw = (data["choices"][0]["message"].get("content") or "").strip()
+
+    tags = []
+    for part in raw.replace("\n", ",").split(","):
+        part = part.strip()
+        if not part:
+            continue
+        if not part.startswith("#"):
+            part = "#" + part.lstrip("#")
+        # basic sanity filter: no spaces, reasonable length
+        if " " not in part and 2 < len(part) <= 30:
+            tags.append(part)
+    return tags[:5]
+
+
 DEFAULT_AUTO_TOPICS = [
     "VAK airdrop claim reminder — no waitlist, no snapshot delay",
     "Why Vasukii's encrypted chat rooms matter for privacy",

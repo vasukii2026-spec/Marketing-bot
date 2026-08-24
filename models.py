@@ -49,13 +49,25 @@ def init_db():
                 id SERIAL PRIMARY KEY,
                 platform TEXT NOT NULL,
                 content TEXT NOT NULL,
-                status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected
+                status TEXT NOT NULL DEFAULT 'pending',  -- pending | approved | rejected | scheduled
                 created_at TEXT NOT NULL,
                 posted_at TEXT,
                 topic TEXT,
                 media_path TEXT,   -- Vercel Blob URL, or NULL
-                media_type TEXT    -- 'image' | 'video' | NULL
+                media_type TEXT,   -- 'image' | 'video' | NULL
+                scheduled_for TEXT -- ISO datetime, set when status = 'scheduled'
             )
+        """)
+        # Add scheduled_for if this table pre-dates the scheduling feature.
+        cur.execute("""
+            DO $$ BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.columns
+                    WHERE table_name='drafts' AND column_name='scheduled_for'
+                ) THEN
+                    ALTER TABLE drafts ADD COLUMN scheduled_for TEXT;
+                END IF;
+            END $$;
         """)
         cur.execute("""
             CREATE TABLE IF NOT EXISTS post_log (
@@ -151,6 +163,35 @@ def update_draft_status(draft_id, status):
         conn.cursor().execute("UPDATE drafts SET status = %s WHERE id = %s", (status, draft_id))
 
 
+def schedule_draft(draft_id, scheduled_for_iso):
+    with get_db() as conn:
+        conn.cursor().execute(
+            "UPDATE drafts SET status = 'scheduled', scheduled_for = %s WHERE id = %s",
+            (scheduled_for_iso, draft_id)
+        )
+
+
+def unschedule_draft(draft_id):
+    with get_db() as conn:
+        conn.cursor().execute(
+            "UPDATE drafts SET status = 'pending', scheduled_for = NULL WHERE id = %s",
+            (draft_id,)
+        )
+
+
+def get_due_scheduled_drafts():
+    """Scheduled drafts whose time has arrived (scheduled_for <= now)."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT * FROM drafts
+               WHERE status = 'scheduled' AND scheduled_for <= %s
+               ORDER BY scheduled_for ASC""",
+            (datetime.utcnow().isoformat(),)
+        )
+        return [dict(r) for r in cur.fetchall()]
+
+
 def mark_posted(draft_id):
     """A post succeeded — delete the draft row entirely rather than keeping
     it around forever. This is what keeps the drafts table from filling up."""
@@ -209,3 +250,98 @@ def get_recent_contents(platform, limit=30):
             (platform, limit)
         )
         return [r["content"] for r in cur.fetchall()]
+
+
+def get_calendar_data(days=45):
+    """Returns {date_str: {"posted": n, "failed": n, "pending": n}} for the
+    last `days` days, combining post_log (posted/failed) and drafts
+    (pending — created but not yet acted on)."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        result = {}
+
+        cur.execute("""
+            SELECT substring(posted_at, 1, 10) AS day, success, COUNT(*) AS n
+            FROM post_log
+            WHERE posted_at >= (CURRENT_DATE - %s::int)::text
+            GROUP BY day, success
+        """, (days,))
+        for row in cur.fetchall():
+            day = row["day"]
+            result.setdefault(day, {"posted": 0, "failed": 0, "pending": 0})
+            if row["success"]:
+                result[day]["posted"] += row["n"]
+            else:
+                result[day]["failed"] += row["n"]
+
+        cur.execute("""
+            SELECT substring(created_at, 1, 10) AS day, COUNT(*) AS n
+            FROM drafts
+            WHERE created_at >= (CURRENT_DATE - %s::int)::text
+            GROUP BY day
+        """, (days,))
+        for row in cur.fetchall():
+            day = row["day"]
+            result.setdefault(day, {"posted": 0, "failed": 0, "pending": 0})
+            result[day]["pending"] += row["n"]
+
+        return result
+
+
+def get_posts_for_day(day_str):
+    """All post_log entries and drafts touching a specific YYYY-MM-DD day."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT * FROM post_log WHERE substring(posted_at,1,10) = %s ORDER BY posted_at DESC",
+            (day_str,)
+        )
+        log_entries = [dict(r) for r in cur.fetchall()]
+        cur.execute(
+            "SELECT * FROM drafts WHERE substring(created_at,1,10) = %s ORDER BY created_at DESC",
+            (day_str,)
+        )
+        drafts = [dict(r) for r in cur.fetchall()]
+        return log_entries, drafts
+
+
+def get_insights_data():
+    """Aggregate data for the Insights dashboard: totals per platform,
+    a 14-day daily post-count timeseries, and top posts by engagement."""
+    with get_db() as conn:
+        cur = conn.cursor()
+
+        cur.execute("""
+            SELECT platform, COUNT(*) AS total,
+                   SUM(CASE WHEN success THEN 1 ELSE 0 END) AS succeeded,
+                   COALESCE(SUM(likes), 0) AS likes,
+                   COALESCE(SUM(reposts), 0) AS reposts,
+                   COALESCE(SUM(replies), 0) AS replies
+            FROM post_log
+            GROUP BY platform
+            ORDER BY total DESC
+        """)
+        by_platform = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT substring(posted_at, 1, 10) AS day, COUNT(*) AS n
+            FROM post_log
+            WHERE success = 1 AND posted_at >= (CURRENT_DATE - 14)::text
+            GROUP BY day ORDER BY day ASC
+        """)
+        timeseries = [dict(r) for r in cur.fetchall()]
+
+        cur.execute("""
+            SELECT platform, content, likes, reposts, replies, posted_at
+            FROM post_log
+            WHERE stats_checked_at IS NOT NULL
+            ORDER BY (COALESCE(likes,0) + COALESCE(reposts,0) + COALESCE(replies,0)) DESC
+            LIMIT 5
+        """)
+        top_posts = [dict(r) for r in cur.fetchall()]
+
+        return {
+            "by_platform": by_platform,
+            "timeseries": timeseries,
+            "top_posts": top_posts,
+        }
