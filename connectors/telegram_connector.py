@@ -31,10 +31,13 @@ def post_to_telegram(content, media_path=None, media_type=None):
     Sends a message (optionally with a photo or video) to the configured
     Telegram chat/channel. When media is attached, `content` becomes the
     caption (Telegram captions are capped at 1024 chars).
-    Returns (success: bool, error_message: str | None)
+    Returns (success, error_message, platform_ref) — platform_ref is the
+    message id. Note: Telegram's Bot API doesn't expose view/reaction
+    counts for channel posts to arbitrary bots, so this ref isn't used
+    for performance tracking today, but is stored for future use.
     """
     if not TELEGRAM_BOT_TOKEN or not TELEGRAM_CHAT_ID:
-        return False, "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set in .env."
+        return False, "TELEGRAM_BOT_TOKEN / TELEGRAM_CHAT_ID not set in .env.", None
 
     try:
         if media_path and media_path.startswith("http"):
@@ -63,7 +66,8 @@ def post_to_telegram(content, media_path=None, media_type=None):
 
         data = resp.json()
         if resp.status_code == 200 and data.get("ok"):
-            return True, None
-        return False, data.get("description", f"Telegram API returned {resp.status_code}")
+            message_id = (data.get("result") or {}).get("message_id")
+            return True, None, message_id
+        return False, data.get("description", f"Telegram API returned {resp.status_code}"), None
     except requests.RequestException as e:
-        return False, str(e)
+        return False, str(e), None

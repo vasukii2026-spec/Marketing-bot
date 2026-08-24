@@ -35,6 +35,7 @@
                             <option value="discord">Discord</option>
                             <option value="bluesky">Bluesky</option>
                             <option value="telegram">Telegram</option>
+                            <option value="mastodon">Mastodon</option>
                         </select>
                     </label>
                     <label>Variants
@@ -42,6 +43,14 @@
                             <option value="1">1</option>
                             <option value="3" selected>3</option>
                             <option value="5">5</option>
+                        </select>
+                    </label>
+                    <label>Tone
+                        <select name="tone">
+                            <option value="default" selected>Default (cosmic/confident)</option>
+                            <option value="hype">Hype</option>
+                            <option value="educational">Educational</option>
+                            <option value="casual">Casual</option>
                         </select>
                     </label>
                 </div>
@@ -128,22 +137,36 @@
         </section>
 
         <section class="log-panel card-in" style="animation-delay: .12s">
-            <h2>Recent Post Log</h2>
+            <div class="panel-header">
+                <h2>Recent Post Log</h2>
+                <form action="{{ url_for('refresh_stats') }}" method="post">
+                    <button type="submit" class="btn-chip">🔄 Refresh stats</button>
+                </form>
+            </div>
             {% if not log %}
                 <p class="empty-state">No posts sent yet.</p>
             {% endif %}
             <table>
-                <thead><tr><th>Platform</th><th>Content</th><th>Status</th><th>Time</th></tr></thead>
+                <thead><tr><th>Platform</th><th>Content</th><th>Status</th><th>Stats</th><th>Time</th></tr></thead>
                 <tbody>
                 {% for entry in log %}
                     <tr>
                         <td><span class="badge platform-{{ entry.platform }}">{{ entry.platform }}</span></td>
                         <td class="log-content">{{ entry.content[:80] }}{% if entry.content|length > 80 %}...{% endif %}</td>
                         <td>{% if entry.success %}<span class="success">✓ Sent</span>{% else %}<span class="failure">✗ Failed</span>{% endif %}</td>
+                        <td class="stats-cell">
+                            {% if entry.stats_checked_at %}
+                                ❤️ {{ entry.likes or 0 }} &nbsp; 🔁 {{ entry.reposts or 0 }} &nbsp; 💬 {{ entry.replies or 0 }}
+                            {% elif entry.platform == 'telegram' %}
+                                <span class="empty-state">n/a</span>
+                            {% else %}
+                                <span class="empty-state">—</span>
+                            {% endif %}
+                        </td>
                         <td>{{ entry.posted_at }}</td>
                     </tr>
                     {% if not entry.success and entry.error_message %}
-                    <tr class="error-row"><td colspan="4">{{ entry.error_message }}</td></tr>
+                    <tr class="error-row"><td colspan="5">{{ entry.error_message }}</td></tr>
                     {% endif %}
                 {% endfor %}
                 </tbody>

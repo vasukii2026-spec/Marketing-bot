@@ -16,9 +16,11 @@ import models
 import generator
 import storage
 import auth
+import stats
 from connectors.discord_connector import post_to_discord
 from connectors.bluesky_connector import post_to_bluesky
 from connectors.telegram_connector import post_to_telegram
+from connectors.mastodon_connector import post_to_mastodon
 
 app = Flask(__name__)
 app.secret_key = os.environ.get("FLASK_SECRET_KEY", "vasukii-dev-secret-change-me")
@@ -37,7 +39,10 @@ PUBLISHERS = {
     "discord": post_to_discord,
     "bluesky": post_to_bluesky,
     "telegram": post_to_telegram,
+    "mastodon": post_to_mastodon,
 }
+
+DUPLICATE_SIMILARITY_THRESHOLD = 0.82
 
 
 def _media_type_for(filename):
@@ -49,15 +54,27 @@ def _media_type_for(filename):
     return None
 
 
+def _is_duplicate(new_content, recent_contents):
+    """True if new_content is suspiciously similar to anything already
+    posted recently — a lightweight guard against accidentally repeating
+    yourself. Uses stdlib difflib, no extra dependency."""
+    import difflib
+    for existing in recent_contents:
+        ratio = difflib.SequenceMatcher(None, new_content, existing).ratio()
+        if ratio >= DUPLICATE_SIMILARITY_THRESHOLD:
+            return True
+    return False
+
+
 def _publish(draft_id, platform, content, media_path=None, media_type=None):
     """Send a draft to its platform, log the attempt, and update its status."""
     publisher = PUBLISHERS.get(platform)
     if publisher:
-        success, error = publisher(content, media_path=media_path, media_type=media_type)
+        success, error, platform_ref = publisher(content, media_path=media_path, media_type=media_type)
     else:
-        success, error = False, f"Posting to '{platform}' isn't wired up yet."
+        success, error, platform_ref = False, f"Posting to '{platform}' isn't wired up yet.", None
 
-    models.log_post(draft_id, platform, content, success, error)
+    models.log_post(draft_id, platform, content, success, error, platform_ref=platform_ref)
     if success:
         # Delete any attached blob too, so storage doesn't fill up with
         # media from posts that already went out.
@@ -117,19 +134,33 @@ def generate():
     platform = request.form.get("platform", "discord")
     topic = request.form.get("topic", "").strip()
     count = int(request.form.get("count", 3))
+    tone = request.form.get("tone", "default")
 
     if not topic:
         flash("Topic is required.", "error")
         return redirect(url_for("dashboard"))
 
     try:
-        variants = generator.generate_variants(platform, topic, count=count)
+        variants = generator.generate_variants(platform, topic, count=count, tone=tone)
     except Exception as e:
         flash(f"Generation failed: {e}", "error")
         return redirect(url_for("dashboard"))
 
+    recent = models.get_recent_contents(platform, limit=30)
+    created, skipped = 0, 0
     for v in variants:
+        if _is_duplicate(v, recent):
+            skipped += 1
+            continue
         models.create_draft(platform, v, topic=topic)
+        created += 1
+
+    if skipped:
+        flash(
+            f"Generated {created} draft(s) — skipped {skipped} that looked too similar "
+            f"to something posted recently.",
+            "info" if created else "error",
+        )
 
     return redirect(url_for("dashboard"))
 
@@ -211,6 +242,65 @@ def post_draft(draft_id):
 
     _publish(draft_id, draft["platform"], draft["content"], draft.get("media_path"), draft.get("media_type"))
     return redirect(url_for("dashboard"))
+
+
+@app.route("/stats/refresh", methods=["POST"])
+@auth.login_required
+def refresh_stats():
+    """Pulls current like/repost/reply counts for recent posted entries,
+    where the platform supports public lookups (Bluesky, Mastodon,
+    Discord). Telegram entries are silently skipped (not supported)."""
+    log = models.get_post_log(limit=50)
+    updated = 0
+    for entry in log:
+        if not entry.get("success") or not entry.get("platform_ref"):
+            continue
+        result = stats.fetch_stats(entry["platform"], entry["platform_ref"])
+        if result:
+            models.update_log_stats(
+                entry["id"], result["likes"], result["reposts"], result["replies"]
+            )
+            updated += 1
+    flash(f"Refreshed stats for {updated} post(s).", "info")
+    return redirect(url_for("dashboard"))
+
+
+@app.route("/api/cron/auto-generate", methods=["GET", "POST"])
+def cron_auto_generate():
+    """Scheduled auto-generation, triggered by Vercel Cron (see vercel.json).
+    Creates new PENDING drafts on a rotating topic/platform — nothing
+    posts automatically, a human still has to approve every draft.
+
+    Protected by CRON_SECRET so randoms can't trigger generation (and burn
+    your Groq quota) by hitting this URL.
+    """
+    cron_secret = os.environ.get("CRON_SECRET", "")
+    auth_header = request.headers.get("Authorization", "")
+    if not cron_secret or auth_header != f"Bearer {cron_secret}":
+        return jsonify({"error": "unauthorized"}), 401
+
+    import random
+    topics = generator.get_auto_topics()
+    if not topics:
+        return jsonify({"created": 0, "note": "no topics configured"}), 200
+
+    platform = random.choice(list(PUBLISHERS.keys()))
+    topic = random.choice(topics)
+
+    try:
+        variants = generator.generate_variants(platform, topic, count=1)
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+
+    recent = models.get_recent_contents(platform, limit=30)
+    created = 0
+    for v in variants:
+        if _is_duplicate(v, recent):
+            continue
+        models.create_draft(platform, v, topic=f"[auto] {topic}")
+        created += 1
+
+    return jsonify({"created": created, "platform": platform, "topic": topic}), 200
 
 
 if __name__ == "__main__":

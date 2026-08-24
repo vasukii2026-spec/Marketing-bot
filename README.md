@@ -43,9 +43,12 @@ automatically too.
    BLUESKY_APP_PASSWORD=...      (optional)
    TELEGRAM_BOT_TOKEN=...        (optional)
    TELEGRAM_CHAT_ID=...          (optional)
+   MASTODON_INSTANCE=...         (optional, e.g. mastodon.social)
+   MASTODON_ACCESS_TOKEN=...     (optional)
    FLASK_SECRET_KEY=...          (any random string)
    ADMIN_PASSWORD=...            (the password you'll log in with)
    TOTP_SECRET=...               (see "Setting up login" below)
+   CRON_SECRET=...               (any random string, enables scheduled auto-generation)
    ```
 
 6. **Deploy.** Vercel builds automatically on every push. Your dashboard
@@ -166,7 +169,41 @@ Open **http://localhost:5000** in your browser.
 - The content generator (`generator.py`) has Vasukii's branding, tone, and
   feature list baked into the prompt — edit `VASUKII_CONTEXT` there if
   anything changes (new features, updated airdrop numbers, etc).
-- There's still no background scheduler or auto-posting loop — every post
-  only goes out the moment a human clicks Approve (or Retry) in the
-  dashboard. "Automatic" here means "one click instead of two," not
-  "unattended."
+
+## Platforms
+
+Discord, Bluesky, Telegram, and **Mastodon** are wired up — all free, no
+paid API tier, no app-review wait. X/Twitter and Instagram were
+deliberately skipped: X now charges per post with no free tier, and
+Instagram's Graph API requires a multi-week Meta app review process
+before it'll post on your behalf. Reddit is effectively closed to new
+developers as of 2026. If any of those change, the connector pattern in
+`connectors/` is easy to extend.
+
+## Features
+
+- **Multiple draft variations** — generate 1/3/5 versions of a post per
+  topic (the "Variants" dropdown) and pick the best one.
+- **Tone presets** — Default / Hype / Educational / Casual, applied to
+  the generation prompt.
+- **Duplicate-content guard** — new drafts are compared against the last
+  30 successful posts on that platform; anything too similar is skipped
+  automatically and you're told how many were filtered out.
+- **Post performance tracking** — click "🔄 Refresh stats" in the Recent
+  Post Log to pull current like/repost/reply counts for Bluesky,
+  Mastodon, and Discord posts (all via public read endpoints, no extra
+  auth needed). Telegram doesn't expose this data via its Bot API, so
+  those rows just show "n/a".
+- **Scheduled auto-generation** — a Vercel Cron job hits
+  `/api/cron/auto-generate` once a day (see `vercel.json`), which
+  generates one new PENDING draft on a rotating topic/platform. Nothing
+  posts automatically — every draft still needs a human click to go
+  live. Set `CRON_SECRET` in your env vars (any random string); Vercel
+  automatically sends it as the request's Bearer token, no extra wiring
+  needed. Customize the topic list with the `AUTO_TOPICS` env var
+  (comma-separated), or edit `DEFAULT_AUTO_TOPICS` in `generator.py`.
+  Note: Vercel's Hobby plan allows cron jobs but caps them to daily
+  scheduling — that's already what's configured.
+- There's still no unattended auto-*posting* — "automatic" here means
+  drafts appear on their own; a human still approves before anything
+  goes out.

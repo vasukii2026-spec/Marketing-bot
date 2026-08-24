@@ -65,9 +65,30 @@ def init_db():
                 content TEXT NOT NULL,
                 posted_at TEXT NOT NULL,
                 success INTEGER NOT NULL,
-                error_message TEXT
+                error_message TEXT,
+                platform_ref TEXT,      -- message id / status id / AT-URI, for stats lookups
+                likes INTEGER,
+                reposts INTEGER,
+                replies INTEGER,
+                stats_checked_at TEXT
             )
         """)
+        # Add columns if this table pre-dates this feature (safe no-op otherwise).
+        for coltype in [
+            "platform_ref TEXT", "likes INTEGER", "reposts INTEGER",
+            "replies INTEGER", "stats_checked_at TEXT"
+        ]:
+            colname = coltype.split()[0]
+            cur.execute(f"""
+                DO $$ BEGIN
+                    IF NOT EXISTS (
+                        SELECT 1 FROM information_schema.columns
+                        WHERE table_name='post_log' AND column_name='{colname}'
+                    ) THEN
+                        ALTER TABLE post_log ADD COLUMN {coltype};
+                    END IF;
+                END $$;
+            """)
 
 
 def create_draft(platform, content, topic=None):
@@ -142,20 +163,31 @@ def delete_draft(draft_id):
         conn.cursor().execute("DELETE FROM drafts WHERE id = %s", (draft_id,))
 
 
-def log_post(draft_id, platform, content, success, error_message=None):
+def log_post(draft_id, platform, content, success, error_message=None, platform_ref=None):
     with get_db() as conn:
         cur = conn.cursor()
         cur.execute(
-            """INSERT INTO post_log (draft_id, platform, content, posted_at, success, error_message)
-               VALUES (%s, %s, %s, %s, %s, %s)""",
-            (draft_id, platform, content, datetime.utcnow().isoformat(), int(success), error_message)
+            """INSERT INTO post_log (draft_id, platform, content, posted_at, success, error_message, platform_ref)
+               VALUES (%s, %s, %s, %s, %s, %s, %s) RETURNING id""",
+            (draft_id, platform, content, datetime.utcnow().isoformat(), int(success), error_message, platform_ref)
         )
+        new_id = cur.fetchone()["id"]
         # Keep the log trimmed so it doesn't grow forever either.
         cur.execute("""
             DELETE FROM post_log WHERE id IN (
                 SELECT id FROM post_log ORDER BY posted_at DESC OFFSET %s
             )
         """, (POST_LOG_KEEP,))
+        return new_id
+
+
+def update_log_stats(log_id, likes, reposts, replies):
+    with get_db() as conn:
+        conn.cursor().execute(
+            """UPDATE post_log SET likes = %s, reposts = %s, replies = %s, stats_checked_at = %s
+               WHERE id = %s""",
+            (likes, reposts, replies, datetime.utcnow().isoformat(), log_id)
+        )
 
 
 def get_post_log(limit=50):
@@ -163,3 +195,17 @@ def get_post_log(limit=50):
         cur = conn.cursor()
         cur.execute("SELECT * FROM post_log ORDER BY posted_at DESC LIMIT %s", (limit,))
         return [dict(r) for r in cur.fetchall()]
+
+
+def get_recent_contents(platform, limit=30):
+    """Recent successfully-posted content for a platform, used by the
+    duplicate-content guard to compare new drafts against."""
+    with get_db() as conn:
+        cur = conn.cursor()
+        cur.execute(
+            """SELECT content FROM post_log
+               WHERE platform = %s AND success = 1
+               ORDER BY posted_at DESC LIMIT %s""",
+            (platform, limit)
+        )
+        return [r["content"] for r in cur.fetchall()]

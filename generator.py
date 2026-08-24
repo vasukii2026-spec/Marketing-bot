@@ -31,15 +31,24 @@ Always include vasukii.xyz as the call to action link.
 DISCORD_RULE = "Write a Discord announcement. Can be slightly longer, use a header line, and can include markdown formatting like **bold**."
 BLUESKY_RULE = "Write a Bluesky post. Keep it under 300 characters. Punchy and conversational, minimal hashtags."
 TELEGRAM_RULE = "Write a Telegram channel announcement. Can be a bit longer than a tweet, plain text (no markdown symbols), can include emojis, ends with a clear call to action."
+MASTODON_RULE = "Write a Mastodon post (a \"toot\"). Keep it under 500 characters. Conversational, community-oriented tone (Mastodon audiences tend to dislike overt marketing hype) — lead with substance, minimal hashtags."
 
 PLATFORM_RULES = {
     "discord": DISCORD_RULE,
     "bluesky": BLUESKY_RULE,
     "telegram": TELEGRAM_RULE,
+    "mastodon": MASTODON_RULE,
+}
+
+TONE_PRESETS = {
+    "default": "",  # uses the base cosmic/confident tone from VASUKII_CONTEXT as-is
+    "hype": "Lean into hype and excitement for this one — energetic, urgent, exclamation-worthy (but still no scammy \"guaranteed\"/\"1000x\" language).",
+    "educational": "Take an educational, explainer tone — walk through the what/why calmly, like teaching someone new to the feature or concept.",
+    "casual": "Keep it casual and low-key, like a quick update from a friend — short sentences, conversational, light humor is welcome.",
 }
 
 
-def generate_draft(platform, topic):
+def generate_draft(platform, topic, tone="default"):
     """
     Generate a single marketing draft for the given platform and topic.
     Returns the generated text, or raises an exception on API failure.
@@ -50,9 +59,12 @@ def generate_draft(platform, topic):
             "and set it as an environment variable."
         )
 
+    tone_instruction = TONE_PRESETS.get(tone, "")
+
     prompt = f"""{VASUKII_CONTEXT}
 
 Task: {PLATFORM_RULES.get(platform, DISCORD_RULE)}
+{f"Tone: {tone_instruction}" if tone_instruction else ""}
 Topic/angle: {topic}
 
 Write only the post content. No preamble, no explanation, no quotation marks around it."""
@@ -91,6 +103,26 @@ Write only the post content. No preamble, no explanation, no quotation marks aro
     return content
 
 
-def generate_variants(platform, topic, count=3):
+DEFAULT_AUTO_TOPICS = [
+    "VAK airdrop claim reminder — no waitlist, no snapshot delay",
+    "Why Vasukii's encrypted chat rooms matter for privacy",
+    "Threads feed feature spotlight — wallet-verified tipping",
+    "End-to-end encrypted DMs walkthrough",
+    "File shredding vault — what it does and why it's different",
+    "Daily game/presale mechanic explainer",
+    "Community milestone / claim count update",
+]
+
+
+def get_auto_topics():
+    """Topics used by scheduled auto-generation. Override by setting
+    AUTO_TOPICS as a comma-separated list in env vars."""
+    raw = os.environ.get("AUTO_TOPICS", "")
+    if raw.strip():
+        return [t.strip() for t in raw.split(",") if t.strip()]
+    return DEFAULT_AUTO_TOPICS
+
+
+def generate_variants(platform, topic, count=3, tone="default"):
     """Generate multiple draft variants for the same topic."""
-    return [generate_draft(platform, topic) for _ in range(count)]
+    return [generate_draft(platform, topic, tone=tone) for _ in range(count)]

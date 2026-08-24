@@ -60,16 +60,18 @@ def _upload_image_blob(access_jwt, image_url):
 def post_to_bluesky(content, media_path=None, media_type=None):
     """
     Publishes a text post to Bluesky, optionally with one embedded image.
-    Returns (success: bool, error_message: str | None)
+    Returns (success, error_message, platform_ref) — platform_ref is the
+    record's AT-URI (used later to look up like/repost counts), or None
+    on failure.
     """
     if not BLUESKY_HANDLE or not BLUESKY_APP_PASSWORD:
-        return False, "BLUESKY_HANDLE / BLUESKY_APP_PASSWORD not set in .env."
+        return False, "BLUESKY_HANDLE / BLUESKY_APP_PASSWORD not set in .env.", None
 
     if len(content) > MAX_CHARS:
-        return False, f"Post is {len(content)} chars, over Bluesky's {MAX_CHARS} limit."
+        return False, f"Post is {len(content)} chars, over Bluesky's {MAX_CHARS} limit.", None
 
     if media_path and media_type == "video":
-        return False, "Video posting to Bluesky isn't supported yet — attach an image instead, or post text-only."
+        return False, "Video posting to Bluesky isn't supported yet — attach an image instead, or post text-only.", None
 
     try:
         session = _create_session()
@@ -97,6 +99,7 @@ def post_to_bluesky(content, media_path=None, media_type=None):
             timeout=30,
         )
         resp.raise_for_status()
-        return True, None
+        uri = resp.json().get("uri")
+        return True, None, uri
     except requests.RequestException as e:
-        return False, str(e)
+        return False, str(e), None
